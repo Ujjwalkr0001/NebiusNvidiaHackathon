@@ -15,13 +15,15 @@ The frontend suite passes all 3 component tests, and `npm audit --audit-level=mo
 - **Frontend:** React + TypeScript + Vite dashboard backed by API data.
 - **Backend:** FastAPI with cookie sessions and organization-scoped access.
 - **Persistence and work:** PostgreSQL-compatible SQLAlchemy models and Alembic migrations; Redis-backed RQ worker.
-- **Integrations:** GitHub App for repository access, webhooks, and draft pull requests; configurable Nebius Token Factory endpoint/model; exact, version-aware Milisa verified-fix lookup.
-- **Repair flow:** persisted state machine → targeted context gathering → cache lookup → Repo Architect/Coder → isolated Python validation → policy checks → draft pull request for human review.
+- **Integrations:** GitHub App for repository access, webhooks, and draft pull requests; Nebius Token Factory for Nemotron Repo Architect reasoning; Millisa's OpenAI-compatible gateway for Coder calls when configured; exact, version-aware local Milisa verified-fix lookup.
+- **Repair flow:** persisted state machine → targeted context gathering → local verified-fix cache lookup → Nemotron Repo Architect / Millisa Coder (with Nebius fallback) → isolated Python validation → policy checks → draft pull request for human review.
 - **Validation boundary:** candidate code runs only in a disposable resource-limited Docker container with network disabled, no host socket, and no production secrets.
 
 The dashboard refreshes persisted overview, repair-job, cache, audit, usage, and repository data every 10 seconds while a repair is active and every 30 seconds otherwise. An open job detail is refreshed on the same interval.
 
 See [docs/architecture.md](docs/architecture.md) for the workflow and trust boundaries.
+
+For Hostinger Web/Business/Cloud hosting without a VPS, use the PHP/MySQL API port in `hostinger-backend/` with the static Vite frontend. See [the Hostinger web hosting deployment guide](docs/hostinger-web-hosting.md) for its current feature boundary and deployment steps. The full Python/RQ/Docker repair worker still requires a separate Linux runner; automatic repair is not ready on shared hosting until the PHP worker and GitHub Actions validation bridge are completed. The Vite frontend supports a build-time `VITE_API_URL` for the API origin.
 
 The deterministic failing repository fixture is in [demo/failing-python-repo](demo/failing-python-repo). Its GitHub Actions workflow runs the failing test on pushes and pull requests; the fixture documents the expected correction and the steps for running cache-miss and exact-cache-hit workflows against configured services.
 
@@ -85,6 +87,8 @@ Repair-job details show the persisted pull-request number, URL, branch, and curr
 ## Nebius configuration
 
 Create a Token Factory account and API key in the [Nebius Token Factory console](https://tokenfactory.nebius.com). The [official quickstart](https://docs.tokenfactory.nebius.com/quickstart) documents the OpenAI-compatible API and `https://api.tokenfactory.nebius.com/v1/` base URL. In the ignored workspace `.env`, set `NEBIUS_API_KEY` to that key, keep `NEBIUS_BASE_URL` at that URL (or use the HTTPS base URL for your selected endpoint), and set `NEBIUS_MODEL` to the exact model ID enabled for the key. The current [Nebius Nemotron catalog](https://nebius.com/services/token-factory/models/nvidia-nemotron-models-inference) shows `nvidia/nemotron-3-super-120b-a12b` as an example; check Token Factory for the exact model ID and access available to your account. Store API keys only in the server-side `.env`, never paste them into chat or commit them. Rotate a key if it is shared outside that file. Optional per-million input/output prices let the dashboard report an estimated cost; actual usage comes from provider token counts. Requests use bounded retries and strict JSON output schemas. Repository text and workflow logs are treated as untrusted input.
+
+The optional Millisa integration follows the supplied [Millisa API docs](https://millisa.codly.in/api/#/docs): it uses the OpenAI-compatible `https://millisa.codly.in/api/v1/chat/completions` endpoint with bearer authentication. Set `MILLISA_API_KEY` and optionally `MILLISA_MODEL` (`millisa-auto` by default) in ignored `.env`. When configured, the worker sends the Coder prompt and relevant repository context to Millisa; Nemotron on Nebius remains the Repo Architect provider. If the Millisa key is absent, the Coder falls back to Nebius. Use the authenticated `/api/v1/milisa/gateway/models` and `/api/v1/milisa/gateway/usage` routes to view the gateway's model catalog and key quota. Millisa may return HTTP 402 for an empty wallet or HTTP 429 for quota limits; those errors are surfaced without storing response bodies or the key.
 
 ## API rate limits
 

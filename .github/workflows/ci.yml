@@ -1,0 +1,83 @@
+name: Project CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: project-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend tests and migration
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: patchwork
+          POSTGRES_USER: patchwork
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U patchwork -d patchwork"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: sqlite:///./ci.db
+      APP_ENV: development
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install backend and test dependencies
+        run: python -m pip install -e ".[test]"
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Apply database migrations
+        run: python -m alembic -c backend/alembic.ini upgrade head
+      - name: Apply PostgreSQL migrations
+        env:
+          DATABASE_URL: postgresql+psycopg://patchwork:ci-only-password@127.0.0.1:5432/patchwork
+        run: python -m alembic -c backend/alembic.ini upgrade head
+      - name: Run backend tests
+        run: python -m pytest backend/tests -q
+      - name: Compile backend modules
+        run: python -m compileall -q backend/app backend/tests
+
+  frontend:
+    name: Frontend tests, audit, and build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Audit production and development dependencies
+        working-directory: frontend
+        run: npm audit --audit-level=moderate
+      - name: Run frontend component tests
+        working-directory: frontend
+        run: npm test
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
